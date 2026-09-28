@@ -52,7 +52,9 @@ def analyze_event(event: EventCreate, context: DetectionContext) -> list[Detecti
     command = event.command or ""
     for name, pattern, score in SUSPICIOUS_COMMANDS:
         if pattern.search(command):
-            results.append(DetectionResult("SSH-CMD-001", "SUSPICIOUS_COMMAND", score, {"indicator": name}))
+            results.append(
+                DetectionResult(f"SSH-CMD-{name.upper()}", "SUSPICIOUS_COMMAND", score, {"indicator": name})
+            )
 
     if command and CREDENTIAL_TERMS.search(command):
         results.append(DetectionResult("CRED-ACCESS-001", "CREDENTIAL_ACCESS", 40, {"command": command[:512]}))

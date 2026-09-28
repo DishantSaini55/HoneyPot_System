@@ -1,0 +1,84 @@
+{
+  "warning": "Metrics use synthetic development data and are not evidence of production accuracy.",
+  "feature_names": [
+    "failed_login_count",
+    "request_count",
+    "session_duration_seconds",
+    "command_count",
+    "suspicious_command_count",
+    "unique_paths",
+    "request_rate",
+    "known_attack_pattern_count"
+  ],
+  "classification_report": {
+    "benign": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 63.0
+    },
+    "brute_force": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 62.0
+    },
+    "command_attack": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 63.0
+    },
+    "web_scanning": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 62.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 250.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 250.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      63,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      62,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      63,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      62
+    ]
+  ],
+  "classes": [
+    "benign",
+    "brute_force",
+    "command_attack",
+    "web_scanning"
+  ]
+}

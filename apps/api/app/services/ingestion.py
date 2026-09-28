@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.detectors.rules import DetectionContext, analyze_event, calculate_risk_score, severity_for_score
 from app.models.entities import (
     Alert,
+    AlertRule,
     AlertStatus,
     Attacker,
     CommandEvent,
@@ -256,7 +257,12 @@ def _correlate_incident(db: DBSession, event: Event, matches: list) -> Incident 
 
 
 def _create_alert_if_required(db: DBSession, incident: Incident) -> Alert | None:
-    should_alert = incident.risk_score >= 80 or "BRUTE_FORCE" in incident.attack_type
+    configured_rules = db.scalars(select(AlertRule).where(AlertRule.enabled.is_(True))).all()
+    should_alert = any(
+        incident.risk_score >= rule.minimum_score
+        and (rule.attack_type is None or rule.attack_type in incident.attack_type)
+        for rule in configured_rules
+    ) if configured_rules else incident.risk_score >= 80 or "BRUTE_FORCE" in incident.attack_type
     if not should_alert:
         return None
     existing = db.scalar(

@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bell, ChartNoAxesCombined, Crosshair, Database, FileClock, LogOut, Radar, Server, ShieldAlert, Users } from "lucide-react";
+import { Activity, Bell, ChartNoAxesCombined, Crosshair, Database, FileClock, ListChecks, LogOut, Radar, ScrollText, Server, Settings, ShieldAlert, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -17,6 +17,9 @@ const navigation = [
   ["/alerts", "Alerts", Bell],
   ["/threat-intelligence", "Threat Intel", Radar],
   ["/admin/users", "Users", Users],
+  ["/admin/rules", "Alert rules", ListChecks],
+  ["/admin/audit-logs", "Audit logs", ScrollText],
+  ["/settings", "Settings", Settings],
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -47,4 +50,3 @@ export function AppShell({ children }: { children: ReactNode }) {
     </div>
   );
 }
-

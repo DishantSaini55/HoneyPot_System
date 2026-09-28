@@ -54,8 +54,18 @@ export interface Overview {
   critical_incidents: number;
   detection_count: number;
   alert_count: number;
+  authentication_failures: number;
+  average_session_duration_seconds: number | null;
+  detection_rate: number | null;
   severity: Record<string, number>;
   categories: Record<string, number>;
   timeline: { bucket: string; count: number }[];
+  top_attackers: { source_ip: string; count: number }[];
+  top_targeted_endpoints: { path: string; count: number }[];
+  top_commands: { command: string; count: number }[];
 }
 
+export interface AttackMapData {
+  points: { source_ip: string; country: string | null; city: string | null; latitude: number; longitude: number }[];
+  unavailable_count: number;
+}

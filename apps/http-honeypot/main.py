@@ -1,4 +1,5 @@
 import html
+import asyncio
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from honeypot_sensor import EventClient, EventEnvelope
 
 PORT = int(os.getenv("HTTP_HONEYPOT_PORT", "8080"))
 MAX_CAPTURE_BYTES = int(os.getenv("HTTP_MAX_CAPTURE_BYTES", "65536"))
+MAX_BODY_BYTES = int(os.getenv("HTTP_MAX_BODY_BYTES", "1048576"))
 SESSION_COOKIE = "HPSESSION"
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
 logger = logging.getLogger("http-honeypot")
@@ -24,9 +26,14 @@ event_client: EventClient | None = None
 async def lifespan(_: FastAPI):
     global event_client
     event_client = EventClient()
+    heartbeat = asyncio.create_task(
+        event_client.heartbeat_loop(os.getenv("HONEYPOT_NODE_NAME", "http-primary"), "HTTP", PORT)
+    )
     try:
         yield
     finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
         if event_client:
             await event_client.close()
 
@@ -75,9 +82,17 @@ def filtered_headers(request: Request) -> dict[str, str]:
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 async def capture(request: Request, path: str) -> Response:
-    raw_body = await request.body()
-    captured = raw_body[:MAX_CAPTURE_BYTES]
-    response = decoy_response(request.url.path, request.method)
+    captured = bytearray()
+    body_size = 0
+    oversized = False
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if len(captured) < MAX_CAPTURE_BYTES:
+            captured.extend(chunk[: MAX_CAPTURE_BYTES - len(captured)])
+        if body_size > MAX_BODY_BYTES:
+            oversized = True
+            break
+    response = PlainTextResponse("Payload Too Large", status_code=413) if oversized else decoy_response(request.url.path, request.method)
     session_id = request.cookies.get(SESSION_COOKIE) or str(uuid.uuid4())
     source_ip = request.client.host if request.client else "0.0.0.0"
     source_port = request.client.port if request.client else None
@@ -91,8 +106,9 @@ async def capture(request: Request, path: str) -> Response:
         "query_string": request.url.query,
         "headers": filtered_headers(request),
         "referer": request.headers.get("referer"),
-        "body_size": len(raw_body),
-        "body_truncated": len(raw_body) > len(captured),
+        "body_size": body_size,
+        "body_truncated": body_size > len(captured),
+        "body_oversized": oversized,
         "body_preview": captured.decode("utf-8", errors="replace"),
         "response_code": response.status_code,
     }

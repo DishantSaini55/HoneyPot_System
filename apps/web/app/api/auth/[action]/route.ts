@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 const API_URL = process.env.API_URL ?? "http://api:8000";
+const secureCookies = process.env.COOKIE_SECURE === "true";
 
 export async function POST(request: NextRequest, context: { params: Promise<{ action: string }> }) {
   const { action } = await context.params;
@@ -21,8 +22,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ac
   const response = new NextResponse(text || null, { status: upstream.status, headers: { "Content-Type": "application/json" } });
   if (upstream.ok && ["login", "refresh"].includes(action)) {
     const tokens = JSON.parse(text);
-    response.cookies.set("access_token", tokens.access_token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: tokens.expires_in, path: "/" });
-    response.cookies.set("refresh_token", tokens.refresh_token, { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production", maxAge: 7 * 86400, path: "/api/auth" });
+    response.cookies.set("access_token", tokens.access_token, { httpOnly: true, sameSite: "lax", secure: secureCookies, maxAge: tokens.expires_in, path: "/" });
+    response.cookies.set("refresh_token", tokens.refresh_token, { httpOnly: true, sameSite: "strict", secure: secureCookies, maxAge: 7 * 86400, path: "/" });
   }
   if (action === "logout") {
     response.cookies.delete("access_token");
@@ -30,4 +31,3 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ac
   }
   return response;
 }
-

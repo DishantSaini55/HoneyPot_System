@@ -137,6 +137,9 @@ async def handle_shell(process: asyncssh.SSHServerProcess) -> None:
 async def main() -> None:
     global client
     client = EventClient()
+    heartbeat = asyncio.create_task(
+        client.heartbeat_loop(os.getenv("HONEYPOT_NODE_NAME", "ssh-primary"), "SSH", PORT)
+    )
     HOST_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not HOST_KEY_PATH.exists():
         asyncssh.generate_private_key("ssh-ed25519").write_private_key(HOST_KEY_PATH)
@@ -154,6 +157,8 @@ async def main() -> None:
     try:
         await server.wait_closed()
     finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
         await client.close()
 
 
@@ -163,4 +168,3 @@ if __name__ == "__main__":
     except (OSError, asyncssh.Error) as exc:
         log_event("startup_failed", error=type(exc).__name__)
         raise SystemExit(1) from exc
-

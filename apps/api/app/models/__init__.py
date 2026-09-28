@@ -13,6 +13,7 @@ from app.models.entities import (
     IncidentEvent,
     MLPrediction,
     Notification,
+    PasswordResetToken,
     RefreshToken,
     Role,
     Session,
@@ -35,10 +36,10 @@ __all__ = [
     "IncidentEvent",
     "MLPrediction",
     "Notification",
+    "PasswordResetToken",
     "RefreshToken",
     "Role",
     "Session",
     "ThreatIntel",
     "User",
 ]
-

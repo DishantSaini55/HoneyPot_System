@@ -21,14 +21,19 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 15
     refresh_token_days: int = 7
+    password_reset_minutes: int = 30
+    password_reset_webhook_url: str | None = None
     sensor_api_key: SecretStr = Field(min_length=24)
     bootstrap_admin_email: str | None = None
-    bootstrap_admin_password: SecretStr | None = None
     cors_origins: str = "http://localhost:3000"
     max_event_body_bytes: int = 262_144
+    ingestion_rate_limit_per_minute: int = 600
     threat_intel_provider_url: str | None = None
     threat_intel_api_key: SecretStr | None = None
     threat_intel_timeout_seconds: float = 3.0
+    ai_provider_url: str | None = None
+    ai_api_key: SecretStr | None = None
+    ai_model: str | None = None
     log_level: str = "INFO"
 
     @property
@@ -39,4 +44,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
-

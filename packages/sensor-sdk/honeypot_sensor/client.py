@@ -73,6 +73,23 @@ class EventClient:
                 await asyncio.sleep(0.25 * (2**attempt))
         return False
 
+    async def heartbeat(self, name: str, kind: str, listen_port: int) -> bool:
+        url = self.ingestion_url.rsplit("/", 1)[0] + "/heartbeat"
+        try:
+            response = await self._client.post(
+                url,
+                headers={"X-Sensor-Key": self.sensor_api_key},
+                json={"name": name, "kind": kind, "listen_port": listen_port},
+            )
+            response.raise_for_status()
+            return True
+        except (httpx.HTTPError, OSError):
+            return False
+
+    async def heartbeat_loop(self, name: str, kind: str, listen_port: int, interval: int = 10) -> None:
+        while True:
+            await self.heartbeat(name, kind, listen_port)
+            await asyncio.sleep(interval)
+
     async def close(self) -> None:
         await self._client.aclose()
-

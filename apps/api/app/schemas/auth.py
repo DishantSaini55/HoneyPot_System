@@ -19,6 +19,15 @@ class LogoutRequest(RefreshRequest):
     pass
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=32)
+    password: str = Field(min_length=12, max_length=128)
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
@@ -31,4 +40,3 @@ class UserRead(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
-
