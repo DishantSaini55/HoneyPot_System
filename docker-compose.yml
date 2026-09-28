@@ -1,0 +1,166 @@
+name: honeypot-system
+
+x-hardened: &hardened
+  restart: unless-stopped
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 200
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    user: postgres
+    environment:
+      POSTGRES_DB: honeypot
+      POSTGRES_USER: honeypot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    networks: [management]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeypot -d honeypot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    <<: *hardened
+
+  redis:
+    image: redis:8.2-alpine
+    user: redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes: ["redis-data:/data"]
+    networks: [management]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    <<: *hardened
+
+  migrate:
+    build: {context: ., dockerfile: docker/api.Dockerfile}
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-environment
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://honeypot:${POSTGRES_PASSWORD}@postgres:5432/honeypot
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      SENSOR_API_KEY: ${SENSOR_API_KEY:?set SENSOR_API_KEY}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [management]
+    restart: "no"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  api:
+    build: {context: ., dockerfile: docker/api.Dockerfile}
+    environment: *api-environment
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    networks: [management, sensor]
+    read_only: true
+    tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    <<: *hardened
+
+  worker:
+    build: {context: ., dockerfile: docker/worker.Dockerfile}
+    environment:
+      DATABASE_URL: postgresql+psycopg://honeypot:${POSTGRES_PASSWORD}@postgres:5432/honeypot
+      REDIS_URL: redis://redis:6379/0
+      THREAT_INTEL_PROVIDER_URL: ${THREAT_INTEL_PROVIDER_URL:-}
+      THREAT_INTEL_API_KEY: ${THREAT_INTEL_API_KEY:-}
+      THREAT_INTEL_TIMEOUT_SECONDS: ${THREAT_INTEL_TIMEOUT_SECONDS:-3}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ML_MODEL_PATH: /app/ml/model/baseline.joblib
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    networks: [management, egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,redis; redis.Redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    <<: *hardened
+
+  web:
+    build: {context: ., dockerfile: docker/web.Dockerfile}
+    environment:
+      API_URL: http://api:8000
+      COOKIE_SECURE: "false"
+    ports: ["127.0.0.1:${WEB_PORT:-3000}:3000"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [management]
+    read_only: true
+    tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/login"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    <<: *hardened
+
+  ssh-honeypot:
+    build: {context: ., dockerfile: docker/ssh-honeypot.Dockerfile}
+    environment: &sensor-environment
+      INGESTION_URL: http://api:8000/api/v1/ingest/events
+      SENSOR_API_KEY: ${SENSOR_API_KEY:?set SENSOR_API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SSH_SESSION_IDLE_TIMEOUT: ${SSH_SESSION_IDLE_TIMEOUT:-300}
+    ports: ["${SSH_PORT:-2222}:2222"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [sensor]
+    read_only: true
+    tmpfs: ["/tmp"]
+    volumes: ["ssh-keys:/data"]
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',2222),2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    <<: *hardened
+
+  http-honeypot:
+    build: {context: ., dockerfile: docker/http-honeypot.Dockerfile}
+    environment: *sensor-environment
+    ports: ["${HTTP_HONEYPOT_PORT:-8080}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [sensor]
+    read_only: true
+    tmpfs: ["/tmp"]
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz',timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    <<: *hardened
+
+networks:
+  management:
+    internal: true
+  sensor:
+    internal: true
+  egress:
+
+volumes:
+  postgres-data:
+  redis-data:
+  ssh-keys:
