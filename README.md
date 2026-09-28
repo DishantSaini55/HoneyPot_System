@@ -1,303 +1,174 @@
-# 🍯 HoneyPot System
+# HoneyPot System
 
-<div align="center">
-  
-![Status](https://img.shields.io/badge/status-active-success?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
-![Python](https://img.shields.io/badge/Python-3.8+-orange?style=flat-square&logo=python)
-![React](https://img.shields.io/badge/React-18+-61dafb?style=flat-square&logo=react)
-![Contributions](https://img.shields.io/badge/contributions-welcome-brightgreen?style=flat-square)
+A production-style, full-stack cybersecurity honeypot and threat-monitoring platform. Isolated SSH and HTTP decoys emit authenticated telemetry to FastAPI; PostgreSQL persists it; deterministic rules score and correlate attacks; Redis Streams drives enrichment, ML classification, and notifications; a Next.js SOC dashboard receives live events through SSE.
 
-**Advanced Cyber Attack Detection & Monitoring System**
+No production page falls back to mock data. Empty databases show an empty state.
 
-[Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Architecture](#-architecture)
+## Architecture
 
-</div>
+```text
+Internet -> SSH/HTTP decoys -> authenticated ingestion API -> PostgreSQL
+                                      |                       |
+                                      +-> Redis Streams -> worker
+                                                           |-- threat intel
+                                                           |-- baseline ML
+                                                           +-- notifications
 
----
-
-## 🎯 Project Overview
-
-HoneyPot System is a **smart cybersecurity solution** designed to detect, monitor, and analyze unauthorized network access attempts. It combines real-time threat intelligence with machine learning to identify and visualize attack patterns across your network infrastructure.
-
-> **What is a Honeypot?** A honeypot is a decoy system designed to attract attackers and log their behavior for security analysis and threat intelligence gathering.
-
----
-
-## ✨ Features
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <b>🗺️ Live Attack Map</b><br/>
-      Real-time geographic visualization of attack origins and targets
-    </td>
-    <td align="center" width="50%">
-      <b>🔍 Threat Intelligence</b><br/>
-      Machine learning-powered attack classification and analysis
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <b>📊 Attack DVR</b><br/>
-      Record and playback attack sessions for forensic analysis
-    </td>
-    <td align="center" width="50%">
-      <b>👤 Attacker Profiles</b><br/>
-      Detailed profiles of detected attackers and their tactics
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <b>🌐 Node Graph Visualization</b><br/>
-      Interactive network topology and traffic flow analysis
-    </td>
-    <td align="center" width="50%">
-      <b>🚨 Swarm Control</b><br/>
-      Manage and orchestrate honeypot instances
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <b>📡 Traffic Telemetry</b><br/>
-      Real-time network traffic monitoring and anomaly detection
-    </td>
-    <td align="center" width="50%">
-      <b>🔐 SSH Honeypot</b><br/>
-      Dedicated SSH service for credential harvesting
-    </td>
-  </tr>
-</table>
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  Frontend (React)                    │
-│  • Live Attack Map       • Threat Intelligence      │
-│  • Node Graph            • Attack DVR               │
-│  • Attacker Profile      • Swarm Control            │
-└──────────────┬──────────────────────────────────────┘
-               │ HTTP/WebSocket
-┌──────────────▼──────────────────────────────────────┐
-│               Backend (Flask)                        │
-│  • API Server        • Data Processing              │
-│  • Authentication    • Real-time Updates            │
-└──────────────┬──────────────────────────────────────┘
-               │
-┌──────────────▼──────────────────────────────────────┐
-│          Honeypot Services                           │
-│  • SSH Honeypot      • HTTP Mock Service            │
-│  • Log Aggregation   • Threat Analysis              │
-└─────────────────────────────────────────────────────┘
+Analyst -> Next.js BFF -> authenticated management API -> analytics/SSE
 ```
 
----
+Docker places the decoys only on the sensor network. PostgreSQL and Redis are only on the internal management network. The API is the sole bridge; decoys have no database credentials. Containers run as non-root, drop all capabilities, use `no-new-privileges`, process/resource limits, and read-only filesystems where practical.
 
-## 🚀 Quick Start
+## Implemented features
 
-### Prerequisites
+- Concurrent AsyncSSH decoy with a deterministic virtual shell that never invokes host commands.
+- HTTP decoy capturing method, target, query, redacted headers, body size, response status, and session identity.
+- Consistent event envelope, idempotent ingestion, sensor API key, payload limit, and rate limiting.
+- PostgreSQL schema and Alembic migrations for users, roles, nodes, attackers, sessions, events, specialized telemetry, detections, intelligence, incidents, alerts, rules, ML predictions, audit logs, and notifications.
+- Explainable rules for brute force, dangerous commands, credential access, scanning, SQL injection, traversal, injection, and scanner user agents.
+- Transparent 0-100 scoring and 15-minute IP-based incident correlation.
+- Optional provider-based IP enrichment with cache, timeout, retry, and failure isolation.
+- Executable logistic-regression baseline with persisted predictions. Its bundled training set is explicitly synthetic development data; its metrics are not production accuracy claims.
+- JWT access tokens, rotating refresh tokens, Argon2 password hashes, one-time password-reset tokens, and ADMIN/ANALYST/VIEWER authorization.
+- Real database analytics, filters, pagination, CSV/JSON export, audit logs, SSE updates, system health, and an actual-coordinate attack plot.
+- Optional OpenAI-compatible analyst endpoint grounded only in stored incident evidence.
 
-- **Node.js** 18+ and npm
-- **Python** 3.8+
-- **Git**
+## Stack
 
-### Installation
+Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack Query, Recharts, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, Redis Streams, AsyncSSH, scikit-learn, Docker Compose, Pytest, Playwright, Ruff, and GitHub Actions.
+
+## Quick start with Docker
+
+Requirements: Docker Engine with Compose v2.
 
 ```bash
-# Clone the repository
-git clone https://github.com/DishantSaini55/HoneyPot_System.git
-cd HoneyPot_System
-
-# Install frontend dependencies
-npm install
-
-# Install backend dependencies
-cd backend
-pip install -r requirements.txt
-cd ..
+cp .env.example .env
+# Replace every replace/change-me value with generated secrets.
+docker compose up --build
 ```
 
-### Running the System
+Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Open `http://localhost:3000`, register the exact `BOOTSTRAP_ADMIN_EMAIL`, and the first matching account becomes ADMIN. API docs are disabled in production mode; for development set `ENVIRONMENT=development` and visit `http://localhost:8000/docs`.
 
-**Terminal 1 - Frontend:**
+Exercise the decoys:
+
 ```bash
+ssh -p 2222 admin@localhost
+curl http://localhost:8080/admin
+curl http://localhost:8080/.env
+curl "http://localhost:8080/..%2f..%2fetc/passwd"
+```
+
+Stop services with `docker compose down`. Add `-v` only when you intentionally want to destroy persisted PostgreSQL/Redis data.
+
+## Local development
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r apps/api/requirements.txt -r apps/api/requirements-dev.txt -r ml/requirements.txt
+.venv\Scripts\python -m pip install -e packages/sensor-sdk -r apps/ssh-honeypot/requirements.txt -r apps/http-honeypot/requirements.txt
+Copy-Item .env.example .env
+cd apps/api
+..\..\.venv\Scripts\python -m alembic upgrade head
+..\..\.venv\Scripts\python -m uvicorn app.main:app --reload
+```
+
+In another terminal:
+
+```powershell
+cd apps/web
+npm ci
 npm run dev
 ```
-Open http://localhost:5173 in your browser
 
-**Terminal 2 - Backend:**
+PostgreSQL and Redis are expected at the URLs in `.env`; Docker Compose is the simplest way to provide them. The sensors and worker can be started with their `main.py` entrypoints once the environment variables are loaded.
+
+## Configuration
+
+All variables are documented in [.env.example](.env.example). Required production values are `POSTGRES_PASSWORD`, `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, and `SENSOR_API_KEY`. Ports, token lifetimes, CORS, body/rate limits, threat-intel provider, webhook alerting, optional AI, model path, and logging are configurable. `.env` files are ignored by Git.
+
+External intelligence, webhook, password-reset delivery, and AI calls are disabled unless their URLs/keys are configured. Their absence never disables deterministic detection or persistence.
+
+## Database and development seed
+
 ```bash
-cd backend
-python app.py
+cd apps/api
+alembic upgrade head
+cd ../..
+SEED_ANALYST_PASSWORD='a-development-password' PYTHONPATH=apps/api python scripts/seed.py
 ```
 
-**Terminal 3 - SSH Honeypot:**
+The seed command refuses production mode and creates only a marked development identity and a policy; it does not fabricate telemetry.
+
+## Detection and risk scoring
+
+Each matched rule contributes a documented score. The strongest score plus 35% of additional signals is capped at 100. Severity bands are LOW 0-29, MEDIUM 30-59, HIGH 60-79, and CRITICAL 80-100. Correlated incidents retain the strongest event score and gain at most 10 points per subsequent event based on its matched signals. See [DETECTION.md](docs/DETECTION.md).
+
+## ML
+
 ```bash
-cd backend
-python ssh_honeypot.py
+python -m ml.train
+python -m ml.evaluate ml/model/baseline.joblib
 ```
 
----
+Training writes a real joblib artifact and JSON report. The worker extracts aggregate event features, performs `predict_proba`, and persists the class, confidence, model version, and exact features. The supplied generator is synthetic and intentionally separable for pipeline verification only.
 
-## 📁 Project Structure
+## API
 
-```
-HoneyPot_System/
-├── src/                          # React Frontend
-│   ├── components/               # React Components
-│   │   ├── LiveAttackMap.jsx    # Real-time attack visualization
-│   │   ├── AttackDVR.jsx        # Attack recording & playback
-│   │   ├── AttackerProfile.jsx  # Attacker analysis dashboard
-│   │   ├── NodeGraph.jsx        # Network topology
-│   │   ├── SwarmControl.jsx     # Honeypot orchestration
-│   │   ├── ThreatIntelligenceExport.jsx
-│   │   └── ...
-│   ├── data/                    # Mock data
-│   ├── App.jsx                  # Main app component
-│   └── main.jsx
-├── backend/                      # Python Backend
-│   ├── app.py                   # Flask API server
-│   ├── ssh_honeypot.py          # SSH honeypot service
-│   ├── requirements.txt         # Python dependencies
-│   └── ...
-├── prototype_ml_classification.py # ML threat classifier
-├── package.json                  # Frontend dependencies
-├── vite.config.js               # Vite configuration
-└── README.md                    # This file
+- `POST /api/v1/ingest/events` — sensor-key protected ingestion.
+- `/api/v1/auth/*` — registration, login, refresh, logout, password reset.
+- `/api/v1/management/*` — protected events, incidents, attackers, sessions, alerts, intelligence, analytics, exports, administration, and SSE.
+- `/health`, `/health/database`, `/health/redis`, `/health/workers`, `/health/honeypots` — live checks.
+
+OpenAPI provides the exact request/response contracts in development.
+
+## Verification
+
+```bash
+ruff check apps packages ml scripts
+pytest
+cd apps/web
+npm audit
+npm run lint
+npm run typecheck
+npm run build
 ```
 
----
+Run explicit load telemetry (subject to the configured ingestion rate limit):
 
-## 🛠️ Tech Stack
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| **Frontend** | React | 18.3 |
-| **UI Framework** | Tailwind CSS | 3.4 |
-| **Bundler** | Vite | 5.4 |
-| **Map Visualization** | Leaflet + React-Leaflet | 4.2 |
-| **Icons** | Lucide React | 1.8 |
-| **Routing** | React Router | 7.14 |
-| **Backend** | Flask | Latest |
-| **ML Classification** | Python scikit-learn | - |
-
----
-
-## 🎮 Usage Guide
-
-### 1. Monitor Live Attacks
-- Navigate to **Live Attack Map** to see real-time attack sources
-- View attack origins geographically
-- Click on attacks for detailed information
-
-### 2. Analyze Attacker Profiles
-- Access **Attacker Profile** section
-- Review attack patterns and frequency
-- Identify recurring threats
-
-### 3. Export Threat Intelligence
-- Use **Threat Intelligence Export** feature
-- Generate reports in multiple formats
-- Share intelligence with security teams
-
-### 4. Review Attack Recordings
-- Open **Attack DVR** to playback recorded sessions
-- Timeline scrubbing for detailed forensics
-- Export session logs
-
-### 5. Manage Honeypots
-- Use **Swarm Control** to manage multiple instances
-- Deploy new honeypot sensors
-- Monitor system health
-
----
-
-## 🤖 ML Classification
-
-The system includes a prototype ML classifier (`prototype_ml_classification.py`) that:
-
-✅ Categorizes attack types  
-✅ Predicts attacker sophistication  
-✅ Identifies attack patterns  
-✅ Generates threat scores  
-
----
-
-## 📊 Dashboard Features
-
-### Real-time Monitoring
-- **Live Attack Feeds** - Continuous stream of detected attacks
-- **Network Graph** - Interactive visualization of traffic flows
-- **Threat Telemetry** - Packet-level analysis and metrics
-- **Traffic Ticker** - Scrolling attack notifications
-
-### Analysis Tools
-- **Node Graph Analysis** - Relationship mapping between IPs
-- **Temporal Analysis** - Time-based attack pattern recognition
-- **Geographic Distribution** - World map of attack origins
-
----
-
-## 🔒 Security Notes
-
-⚠️ **Important:** This is a security research tool. Use only in controlled environments.
-
-- Run honeypots on isolated networks when possible
-- Monitor resource usage (honeypots can attract heavy traffic)
-- Regularly review and analyze captured data
-- Use SSH keys with strong passphrases
-- Keep dependencies updated
-
----
-
-## 📝 Environment Configuration
-
-Create a `.env` file in the backend directory:
-
-```env
-FLASK_ENV=development
-FLASK_DEBUG=True
-API_PORT=5000
-SSH_PORT=2222
-LOG_LEVEL=INFO
+```bash
+python scripts/generate_events.py --count 10000 --sensor-key "$SENSOR_API_KEY"
 ```
 
----
+The script reports measured client throughput and latency; the repository makes no unmeasured throughput claims.
 
-## 🤝 Contributing
+## Safe deployment
 
-Contributions are welcome! 
+Place a TLS reverse proxy in front of the web management plane, restrict it by VPN/firewall, rotate all example secrets, keep API/PostgreSQL/Redis unexposed, configure retention/backups, and monitor resource usage. Bind management ports to loopback unless an authenticated proxy needs them. Treat captured credentials as sensitive data. This repository has been locally tested, but it has not undergone an independent penetration test and should not be exposed to the public internet without one.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+An HTTPS overlay is included. After setting `TLS_CERT_PATH` and `TLS_KEY_PATH`, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`. It enables secure cookies and exposes only the TLS reverse proxy publicly; firewall the decoy and management ports according to your deployment.
 
----
+## Documentation
 
-## 📄 License
+- [Initial audit](docs/INITIAL_AUDIT.md)
+- [Detection and scoring](docs/DETECTION.md)
+- [Security model](docs/SECURITY.md)
+- [Interview guide](docs/INTERVIEW_GUIDE.md)
+- [Verification report](docs/VERIFICATION.md)
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Known limitations
 
----
+- FTP, Telnet, and MySQL decoys are extension points, not implemented services.
+- Email notification has an interface but only in-app and generic webhook delivery are implemented.
+- GeoIP and reputation require a configured provider.
+- Synthetic ML evaluation cannot establish real-world accuracy.
+- Multi-instance API rate limiting depends on Redis; the local fallback is per process.
+- Docker validation must be run on a host with Docker available.
 
-## 🙋 Support
+## Resume description
 
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check existing documentation
-- Review component code comments
+**HoneyPot System — Full-Stack Cybersecurity Threat Detection Platform**
 
----
-
-<div align="center">
-
-### Made with 🍯 by [DishantSaini55](https://github.com/DishantSaini55)
-
-**⭐ If you find this project useful, please consider giving it a star!**
-
-</div>
+- Built a Next.js/FastAPI SOC platform backed by PostgreSQL, Redis Streams, Alembic, SSE, server-side analytics, and role-based incident workflows.
+- Engineered isolated AsyncSSH and HTTP decoys that capture normalized telemetry without executing attacker input or exposing management-plane credentials.
+- Implemented deterministic attack rules, transparent risk scoring, incident correlation, optional threat intelligence, webhook/in-app alerts, and an executable explainable ML baseline.
+- Containerized seven services with non-root identities, read-only filesystems, dropped capabilities, segmented networks, health checks, and CI dependency/secret/container scanning.

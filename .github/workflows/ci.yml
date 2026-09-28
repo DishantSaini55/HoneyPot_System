@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r apps/api/requirements.txt -r apps/api/requirements-dev.txt -r apps/ssh-honeypot/requirements.txt -r apps/http-honeypot/requirements.txt -r ml/requirements.txt -e packages/sensor-sdk
+      - run: ruff check apps packages ml scripts
+      - run: PYTHONPATH=apps/api:. pytest apps/api/tests ml/tests -q
+        env:
+          DATABASE_URL: sqlite:///./ci.db
+          REDIS_URL: redis://127.0.0.1:6399/15
+          JWT_SECRET: ci-only-secret-that-is-at-least-32-characters
+          SENSOR_API_KEY: ci-sensor-key-at-least-24-characters
+          BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      - run: PYTHONPATH=apps/ssh-honeypot pytest apps/ssh-honeypot/tests -q
+      - run: PYTHONPATH=apps/http-honeypot pytest apps/http-honeypot/tests -q
+  web:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: apps/web}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: apps/web/package-lock.json}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
