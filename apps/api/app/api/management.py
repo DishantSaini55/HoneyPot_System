@@ -17,6 +17,7 @@ from app.models.entities import (
     AlertStatus,
     Attacker,
     AuditLog,
+    AlertRule,
     Detection,
     Event,
     HoneypotNode,
@@ -27,6 +28,7 @@ from app.models.entities import (
     Session as HoneypotSession,
     SessionStatus,
     Severity,
+    ThreatIntel,
     User,
 )
 from app.schemas.events import EventRead
@@ -179,8 +181,13 @@ def list_alerts(db: Session = Depends(get_db)) -> list[dict]:
 def analytics_overview(db: Session = Depends(get_db)) -> dict:
     severity_rows = db.execute(select(Event.severity, func.count(Event.id)).group_by(Event.severity)).all()
     category_rows = db.execute(select(Detection.attack_type, func.count(Detection.id)).group_by(Detection.attack_type)).all()
+    bucket = (
+        func.date_trunc("hour", Event.timestamp)
+        if db.bind is not None and db.bind.dialect.name == "postgresql"
+        else func.strftime("%Y-%m-%d %H:00:00", Event.timestamp)
+    )
     timeline_rows = db.execute(
-        select(func.date_trunc("hour", Event.timestamp).label("bucket"), func.count(Event.id))
+        select(bucket.label("bucket"), func.count(Event.id))
         .group_by("bucket")
         .order_by(desc("bucket"))
         .limit(48)
@@ -211,6 +218,186 @@ def list_honeypots(db: Session = Depends(get_db)) -> list[dict]:
             "last_seen_at": node.last_seen_at,
         }
         for node in nodes
+    ]
+
+
+@router.get("/attackers")
+def list_attackers(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    filters = [Attacker.source_ip.ilike(f"%{search}%")] if search else []
+    total = db.scalar(select(func.count(Attacker.id)).where(*filters)) or 0
+    attackers = db.scalars(
+        select(Attacker).where(*filters).order_by(desc(Attacker.last_seen_at)).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    items = []
+    for attacker in attackers:
+        session_count = db.scalar(select(func.count(HoneypotSession.id)).where(HoneypotSession.attacker_id == attacker.id)) or 0
+        event_count = db.scalar(select(func.count(Event.id)).where(Event.source_ip == attacker.source_ip)) or 0
+        max_risk = db.scalar(select(func.max(Event.risk_score)).where(Event.source_ip == attacker.source_ip)) or 0
+        items.append(
+            {
+                "id": attacker.id,
+                "source_ip": attacker.source_ip,
+                "first_seen_at": attacker.first_seen_at,
+                "last_seen_at": attacker.last_seen_at,
+                "country": attacker.country,
+                "city": attacker.city,
+                "asn": attacker.asn,
+                "organization": attacker.organization,
+                "session_count": session_count,
+                "event_count": event_count,
+                "max_risk_score": max_risk,
+            }
+        )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
+
+
+@router.get("/attackers/{source_ip}")
+def get_attacker(source_ip: str, db: Session = Depends(get_db)) -> dict:
+    attacker = db.scalar(select(Attacker).where(Attacker.source_ip == source_ip))
+    if attacker is None:
+        raise HTTPException(status_code=404, detail="Attacker not found")
+    sessions = db.scalars(
+        select(HoneypotSession).where(HoneypotSession.attacker_id == attacker.id).order_by(desc(HoneypotSession.started_at))
+    ).all()
+    intel = db.scalars(select(ThreatIntel).where(ThreatIntel.source_ip == source_ip)).all()
+    return {
+        "attacker": {
+            "source_ip": attacker.source_ip,
+            "first_seen_at": attacker.first_seen_at,
+            "last_seen_at": attacker.last_seen_at,
+            "country": attacker.country,
+            "city": attacker.city,
+            "latitude": attacker.latitude,
+            "longitude": attacker.longitude,
+            "asn": attacker.asn,
+            "organization": attacker.organization,
+        },
+        "sessions": [
+            {
+                "id": item.id,
+                "protocol": item.protocol,
+                "source_port": item.source_port,
+                "destination_port": item.destination_port,
+                "status": item.status.value,
+                "started_at": item.started_at,
+                "ended_at": item.ended_at,
+            }
+            for item in sessions
+        ],
+        "threat_intelligence": [
+            {"provider": item.provider, "status": item.status, "data": item.data, "checked_at": item.checked_at}
+            for item in intel
+        ],
+    }
+
+
+@router.get("/sessions")
+def list_sessions(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+    db: Session = Depends(get_db),
+) -> dict:
+    total = db.scalar(select(func.count(HoneypotSession.id))) or 0
+    sessions = db.scalars(
+        select(HoneypotSession).order_by(desc(HoneypotSession.started_at)).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    items = []
+    for item in sessions:
+        attacker = db.get(Attacker, item.attacker_id)
+        count = db.scalar(select(func.count(Event.id)).where(Event.session_id == item.id)) or 0
+        items.append(
+            {
+                "id": item.id,
+                "source_ip": attacker.source_ip if attacker else "unknown",
+                "protocol": item.protocol,
+                "destination_port": item.destination_port,
+                "status": item.status.value,
+                "started_at": item.started_at,
+                "ended_at": item.ended_at,
+                "event_count": count,
+            }
+        )
+    return {"items": items, "page": page, "page_size": page_size, "total": total}
+
+
+@router.get("/sessions/{session_id}")
+def get_session(session_id: str, db: Session = Depends(get_db)) -> dict:
+    session = db.get(HoneypotSession, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    events = db.scalars(
+        select(Event).options(selectinload(Event.detections)).where(Event.session_id == session_id).order_by(Event.timestamp)
+    ).unique().all()
+    return {
+        "session": {
+            "id": session.id,
+            "protocol": session.protocol,
+            "source_port": session.source_port,
+            "destination_port": session.destination_port,
+            "status": session.status.value,
+            "started_at": session.started_at,
+            "ended_at": session.ended_at,
+        },
+        "events": [EventRead.model_validate(item) for item in events],
+    }
+
+
+@router.get("/threat-intelligence")
+def list_threat_intelligence(db: Session = Depends(get_db)) -> list[dict]:
+    records = db.scalars(select(ThreatIntel).order_by(desc(ThreatIntel.checked_at)).limit(500)).all()
+    return [
+        {
+            "id": item.id,
+            "source_ip": item.source_ip,
+            "provider": item.provider,
+            "status": item.status,
+            "reputation_score": item.reputation_score,
+            "known_malicious": item.known_malicious,
+            "data": item.data,
+            "checked_at": item.checked_at,
+        }
+        for item in records
+    ]
+
+
+@router.get("/admin/audit-logs")
+def list_audit_logs(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(RoleName.ADMIN)),
+) -> list[dict]:
+    records = db.scalars(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(500)).all()
+    return [
+        {"id": item.id, "user_id": item.user_id, "action": item.action, "source_ip": item.source_ip, "metadata": item.metadata_json, "created_at": item.created_at}
+        for item in records
+    ]
+
+
+@router.get("/admin/users")
+def list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(RoleName.ADMIN)),
+) -> list[dict]:
+    users = db.scalars(select(User).order_by(User.created_at)).all()
+    return [
+        {"id": item.id, "email": item.email, "role": item.role.name.value, "is_active": item.is_active, "created_at": item.created_at}
+        for item in users
+    ]
+
+
+@router.get("/admin/rules")
+def list_rules(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(RoleName.ADMIN, RoleName.ANALYST)),
+) -> list[dict]:
+    rules = db.scalars(select(AlertRule).order_by(AlertRule.name)).all()
+    return [
+        {"id": item.id, "name": item.name, "minimum_score": item.minimum_score, "attack_type": item.attack_type, "enabled": item.enabled, "channels": item.channels}
+        for item in rules
     ]
 
 
@@ -277,4 +464,3 @@ async def stream_events(after: datetime | None = None) -> StreamingResponse:
             await asyncio.sleep(1)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
-
