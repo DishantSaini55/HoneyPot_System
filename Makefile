@@ -1,13 +1,20 @@
-.PHONY: up down migrate test lint train
+.PHONY: up down migrate test lint train docker-up docker-down
 
 up:
-	docker compose up --build
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-stack.ps1 start
 
 down:
-	docker compose down
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-stack.ps1 stop
 
 migrate:
-	docker compose run --rm migrate
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-infra.ps1 start
+	cd apps/api && ../../.venv/Scripts/python -m alembic upgrade head
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
 
 test:
 	.venv/Scripts/python -m pytest

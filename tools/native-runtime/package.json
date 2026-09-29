@@ -1,0 +1,13 @@
+{
+  "name": "honeypot-native-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Repository-local native PostgreSQL runtime tooling for Windows development",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "embedded-postgres": "18.4.0-beta.17",
+    "pg": "8.16.3"
+  }
+}

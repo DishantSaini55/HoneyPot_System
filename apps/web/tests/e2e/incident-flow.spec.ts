@@ -13,6 +13,9 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page.getByText("Total events", { exact: true })).toBeVisible();
+  const totalCard = page.getByText("Total events", { exact: true }).locator("..");
+  const before = Number(await totalCard.locator("p").nth(1).innerText());
 
   const eventId = crypto.randomUUID();
   const sessionId = crypto.randomUUID();
@@ -33,6 +36,7 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
     },
   });
   expect(response.status()).toBe(202);
+  await expect.poll(async () => Number(await totalCard.locator("p").nth(1).innerText()), { timeout: 15_000 }).toBeGreaterThan(before);
 
   await page.goto("/incidents");
   await page.getByRole("link", { name: /INC-/ }).first().click();
@@ -41,4 +45,26 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   await expect(page.getByText("ACKNOWLEDGED")).toBeVisible();
   await page.getByRole("button", { name: "Resolve" }).click();
   await expect(page.getByText("RESOLVED")).toBeVisible();
+});
+
+test("major SOC routes render backend-backed states", async ({ page }) => {
+  const email = process.env.E2E_ADMIN_EMAIL ?? "admin@example.com";
+  const password = process.env.E2E_ADMIN_PASSWORD ?? "e2e-admin-password";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+
+  const routes = [
+    "/dashboard", "/events", "/analytics", "/attackers", "/sessions", "/honeypots",
+    "/incidents", "/alerts", "/threat-intelligence", "/admin/users", "/admin/rules",
+    "/admin/audit-logs", "/settings",
+  ];
+  for (const route of routes) {
+    const response = await page.goto(route);
+    expect(response?.ok(), route).toBeTruthy();
+    await expect(page.locator("main")).toBeVisible();
+    await expect(page.locator("main")).not.toContainText("Unable to load the management API");
+  }
 });

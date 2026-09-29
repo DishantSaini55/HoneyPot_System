@@ -158,6 +158,54 @@ def test_role_restriction_and_expired_access_token(client):
     assert client.get("/api/v1/management/events", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
 
 
+def test_refresh_logout_and_password_reset_are_one_time(client, monkeypatch):
+    from app.api import auth
+
+    client.post("/api/v1/auth/register", json={"email": "admin@example.com", "password": "original-test-password"})
+    login = client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": "original-test-password"})
+    original_refresh = login.json()["refresh_token"]
+    replacement = client.post("/api/v1/auth/refresh", json={"refresh_token": original_refresh})
+    assert replacement.status_code == 200
+    assert client.post("/api/v1/auth/refresh", json={"refresh_token": original_refresh}).status_code == 401
+    replacement_refresh = replacement.json()["refresh_token"]
+    assert client.post("/api/v1/auth/logout", json={"refresh_token": replacement_refresh}).status_code == 204
+    assert client.post("/api/v1/auth/refresh", json={"refresh_token": replacement_refresh}).status_code == 401
+
+    delivered = {}
+
+    class DeliveryResponse:
+        def raise_for_status(self):
+            return None
+
+    def capture_delivery(_url, *, json, timeout):
+        delivered.update(json)
+        assert timeout == 3.0
+        return DeliveryResponse()
+
+    monkeypatch.setattr(auth.httpx, "post", capture_delivery)
+    config = get_settings()
+    previous_webhook = config.password_reset_webhook_url
+    config.password_reset_webhook_url = "http://reset-delivery.invalid/private"
+    try:
+        requested = client.post("/api/v1/auth/password-reset/request", json={"email": "admin@example.com"})
+    finally:
+        config.password_reset_webhook_url = previous_webhook
+    assert requested.status_code == 202
+    assert delivered["email"] == "admin@example.com"
+    new_password = "replacement-test-password"
+    confirmed = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": delivered["reset_token"], "password": new_password},
+    )
+    assert confirmed.status_code == 204
+    assert client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": delivered["reset_token"], "password": new_password},
+    ).status_code == 400
+    assert client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": "original-test-password"}).status_code == 401
+    assert client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": new_password}).status_code == 200
+
+
 def test_ingestion_rate_limit(client):
     previous = settings.ingestion_rate_limit_per_minute
     settings.ingestion_rate_limit_per_minute = 1

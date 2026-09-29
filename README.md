@@ -37,17 +37,30 @@ Docker places the decoys only on the sensor network. PostgreSQL and Redis are on
 
 Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack Query, Recharts, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, Redis Streams, AsyncSSH, scikit-learn, Docker Compose, Pytest, Playwright, Ruff, and GitHub Actions.
 
-## Quick start with Docker
+## Native Windows quick start (Docker not required)
 
-Requirements: Docker Engine with Compose v2.
+Prerequisites: Windows 10/11, Python 3.12, Node.js 20+ (validated with Node 22), npm 10+, and PowerShell. The setup script uses a repository-local actual PostgreSQL distribution and native Redis 8 for Windows; it does not install Docker or require administrator-installed PostgreSQL.
 
-```bash
-cp .env.example .env
-# Replace every replace/change-me value with generated secrets.
-docker compose up --build
+```powershell
+# One-time native Redis installation (Redis 8 Windows fork)
+winget install --id taizod1024.redis-windows-fork --source winget
+
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r apps/api/requirements.txt -r apps/api/requirements-dev.txt -r ml/requirements.txt
+.venv\Scripts\python -m pip install -e packages/sensor-sdk -r apps/ssh-honeypot/requirements.txt -r apps/http-honeypot/requirements.txt
+Push-Location apps/web; npm.cmd ci; Pop-Location
+
+# Creates ignored .runtime/native.env with random local-only secrets, initializes PostgreSQL, and starts PostgreSQL + Redis.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-infra.ps1 setup
+
+# Train the local development-only model, build Next.js, migrate, and start API, worker, SSH/HTTP decoys, and web.
+.venv\Scripts\python -m ml.train
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-stack.ps1 start
 ```
 
-Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Open `http://localhost:3000`, register the exact `BOOTSTRAP_ADMIN_EMAIL`, and the first matching account becomes ADMIN. API docs are disabled in production mode; for development set `ENVIRONMENT=development` and visit `http://localhost:8000/docs`.
+The native services bind to loopback by default: web `http://127.0.0.1:3000`, API `http://127.0.0.1:8000`, HTTP decoy `http://127.0.0.1:8080`, SSH decoy `127.0.0.1:2222`, PostgreSQL `127.0.0.1:55432`, and Redis `127.0.0.1:56379`. Open the web URL, register the exact `BOOTSTRAP_ADMIN_EMAIL` from `.runtime/native.env`, and the first matching account becomes ADMIN. API docs are available in development at `http://127.0.0.1:8000/docs`.
+
+Use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-stack.ps1 status` for state, and replace `start` with `stop` to stop the application stack and local data services. Runtime data, logs, generated secrets, and the PostgreSQL cluster live in ignored `.runtime/`.
 
 Exercise the decoys:
 
@@ -58,29 +71,24 @@ curl http://localhost:8080/.env
 curl "http://localhost:8080/..%2f..%2fetc/passwd"
 ```
 
-Stop services with `docker compose down`. Add `-v` only when you intentionally want to destroy persisted PostgreSQL/Redis data.
+## Optional containerized deployment
 
-## Local development
+Docker is retained for deployment only; it is not a local development or validation prerequisite. After creating a production `.env` with unique secrets, use `docker compose up --build`. For the TLS overlay, set `TLS_CERT_PATH` and `TLS_KEY_PATH` and use `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`.
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python -m pip install -r apps/api/requirements.txt -r apps/api/requirements-dev.txt -r ml/requirements.txt
-.venv\Scripts\python -m pip install -e packages/sensor-sdk -r apps/ssh-honeypot/requirements.txt -r apps/http-honeypot/requirements.txt
-Copy-Item .env.example .env
-cd apps/api
-..\..\.venv\Scripts\python -m alembic upgrade head
-..\..\.venv\Scripts\python -m uvicorn app.main:app --reload
-```
+## Native development commands
 
-In another terminal:
+The managed native path above is recommended. For individual processes, first load the generated environment in each PowerShell session:
 
 ```powershell
-cd apps/web
-npm ci
-npm run dev
+Get-Content .runtime\native.env | ForEach-Object { if ($_ -and -not $_.StartsWith('#')) { $n, $v = $_.Split('=', 2); Set-Item "Env:$n" $v } }
+$env:PYTHONPATH = "apps/api;packages/sensor-sdk;."
+.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv\Scripts\python apps/worker/main.py
+.venv\Scripts\python apps/ssh-honeypot/main.py
+.venv\Scripts\python -m uvicorn main:app --app-dir apps/http-honeypot --host 127.0.0.1 --port 8080
 ```
 
-PostgreSQL and Redis are expected at the URLs in `.env`; Docker Compose is the simplest way to provide them. The sensors and worker can be started with their `main.py` entrypoints once the environment variables are loaded.
+For the frontend development server, use `Push-Location apps/web; $env:API_URL = 'http://127.0.0.1:8000'; npm.cmd run dev; Pop-Location`. The tracked `native-stack.ps1` launcher uses the supported Next standalone production server and copies its static assets.
 
 ## Configuration
 
@@ -90,11 +98,10 @@ External intelligence, webhook, password-reset delivery, and AI calls are disabl
 
 ## Database and development seed
 
-```bash
-cd apps/api
-alembic upgrade head
-cd ../..
-SEED_ANALYST_PASSWORD='a-development-password' PYTHONPATH=apps/api python scripts/seed.py
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-infra.ps1 start
+Push-Location apps/api; ..\..\.venv\Scripts\python -m alembic upgrade head; Pop-Location
+$env:SEED_ANALYST_PASSWORD='a-development-password'; $env:PYTHONPATH='apps/api'; .venv\Scripts\python scripts/seed.py
 ```
 
 The seed command refuses production mode and creates only a marked development identity and a policy; it does not fabricate telemetry.
@@ -105,9 +112,9 @@ Each matched rule contributes a documented score. The strongest score plus 35% o
 
 ## ML
 
-```bash
-python -m ml.train
-python -m ml.evaluate ml/model/baseline.joblib
+```powershell
+.venv\Scripts\python -m ml.train
+.venv\Scripts\python -m ml.evaluate ml/model/baseline.joblib
 ```
 
 Training writes a real joblib artifact and JSON report. The worker extracts aggregate event features, performs `predict_proba`, and persists the class, confidence, model version, and exact features. The supplied generator is synthetic and intentionally separable for pipeline verification only.
@@ -123,20 +130,26 @@ OpenAPI provides the exact request/response contracts in development.
 
 ## Verification
 
-```bash
-ruff check apps packages ml scripts
-pytest
-cd apps/web
-npm audit
-npm run lint
-npm run typecheck
-npm run build
+```powershell
+.venv\Scripts\python -m ruff check apps packages ml scripts
+.venv\Scripts\python -m pytest
+Push-Location apps/web
+npm.cmd audit
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd run build
+Pop-Location
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/native-stack.ps1 start
+# In a second shell with .runtime/native.env loaded:
+.venv\Scripts\python scripts/validate_honeypots.py
+.venv\Scripts\python scripts/validate_detection_pipeline.py
+.venv\Scripts\python scripts/validate_auth_runtime.py
 ```
 
 Run explicit load telemetry (subject to the configured ingestion rate limit):
 
-```bash
-python scripts/generate_events.py --count 10000 --sensor-key "$SENSOR_API_KEY"
+```powershell
+.venv\Scripts\python scripts/generate_events.py --count 10000 --sensor-key $env:SENSOR_API_KEY
 ```
 
 The script reports measured client throughput and latency; the repository makes no unmeasured throughput claims.
@@ -145,7 +158,7 @@ The script reports measured client throughput and latency; the repository makes 
 
 Place a TLS reverse proxy in front of the web management plane, restrict it by VPN/firewall, rotate all example secrets, keep API/PostgreSQL/Redis unexposed, configure retention/backups, and monitor resource usage. Bind management ports to loopback unless an authenticated proxy needs them. Treat captured credentials as sensitive data. This repository has been locally tested, but it has not undergone an independent penetration test and should not be exposed to the public internet without one.
 
-An HTTPS overlay is included. After setting `TLS_CERT_PATH` and `TLS_KEY_PATH`, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`. It enables secure cookies and exposes only the TLS reverse proxy publicly; firewall the decoy and management ports according to your deployment.
+An HTTPS overlay is included for optional containerized deployment. It enables secure cookies and exposes only the TLS reverse proxy publicly; firewall the decoy and management ports according to your deployment.
 
 ## Documentation
 
@@ -162,7 +175,7 @@ An HTTPS overlay is included. After setting `TLS_CERT_PATH` and `TLS_KEY_PATH`, 
 - GeoIP and reputation require a configured provider.
 - Synthetic ML evaluation cannot establish real-world accuracy.
 - Multi-instance API rate limiting depends on Redis; the local fallback is per process.
-- Docker validation must be run on a host with Docker available.
+- Container deployment validation requires a host with Docker available; native development and validation do not.
 
 ## Resume description
 
