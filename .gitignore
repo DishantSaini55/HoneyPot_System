@@ -17,6 +17,16 @@ test-results/
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
 *.log
 *.tsbuildinfo
+coverage/
+coverage.xml
+*.tmp
+*.bak
 .DS_Store
