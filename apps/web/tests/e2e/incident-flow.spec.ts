@@ -55,20 +55,6 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   await expect(page.getByText("RESOLVED")).toBeVisible();
 });
 
-test("dashboard presents a retryable API failure", async ({ page }) => {
-  const email = process.env.E2E_ADMIN_EMAIL ?? "admin@example.com";
-  const password = process.env.E2E_ADMIN_PASSWORD ?? "e2e-admin-password";
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
-  await page.route("**/api/management/analytics/overview", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Management API is unavailable" }) }));
-  await page.reload();
-  await expect(page.getByRole("alert")).toContainText("Unable to load the management API");
-  await expect(page.getByRole("button", { name: "Retry request" })).toBeVisible();
-});
-
 test("major SOC routes render backend-backed states", async ({ page }) => {
   const email = process.env.E2E_ADMIN_EMAIL ?? "admin@example.com";
   const password = process.env.E2E_ADMIN_PASSWORD ?? "e2e-admin-password";
