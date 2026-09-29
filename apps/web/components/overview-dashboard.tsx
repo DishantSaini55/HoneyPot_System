@@ -17,7 +17,7 @@ export function OverviewDashboard() {
   const events = useQuery({ queryKey: ["events", "latest"], queryFn: () => api<Page<EventRecord>>("events?page_size=8") });
   const map = useQuery({ queryKey: ["attack-map"], queryFn: () => api<AttackMapData>("attackers-map") });
   if (overview.isLoading) return <p className="text-slate-400">Loading telemetry…</p>;
-  if (overview.error) return <p role="alert" className="text-rose-300">Unable to load the management API.</p>;
+  if (overview.error) return <Card><p role="alert" className="text-rose-300">Unable to load the management API. Check service health and retry.</p><button type="button" onClick={() => overview.refetch()} className="mt-3 text-sm text-cyan-300 hover:underline">Retry request</button></Card>;
   const data = overview.data!;
   const cards = [
     ["Total events", data.total_events], ["Active sessions", data.active_sessions], ["Unique attackers", data.unique_attackers],

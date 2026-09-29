@@ -12,19 +12,25 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const target = new URL(`${API_URL}/api/v1/management/${path.join("/")}`);
   request.nextUrl.searchParams.forEach((value, key) => target.searchParams.append(key, value));
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
-  let upstream = await fetch(target, {
-    method: request.method,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": request.headers.get("content-type") ?? "application/json" },
-    body,
-    cache: "no-store",
-  });
+  let upstream: globalThis.Response;
+  try {
+    upstream = await fetch(target, {
+      method: request.method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": request.headers.get("content-type") ?? "application/json" },
+      body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return NextResponse.json({ detail: "Management API is unavailable" }, { status: 503 });
+  }
   let refreshed: { access_token: string; refresh_token: string; expires_in: number } | null = null;
   if (upstream.status === 401 && store.get("refresh_token")?.value) {
     const refresh = await fetch(`${API_URL}/api/v1/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: store.get("refresh_token")!.value }),
-      cache: "no-store",
+      cache: "no-store", signal: AbortSignal.timeout(10_000),
     });
     if (refresh.ok) {
       refreshed = await refresh.json();

@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     refresh_token_days: int = 7
     password_reset_minutes: int = 30
     password_reset_webhook_url: str | None = None
+    password_reset_webhook_secret: SecretStr | None = None
+    password_reset_webhook_max_age_seconds: int = 300
+    auth_rate_limit_window_seconds: int = 900
+    login_rate_limit: int = 10
+    password_reset_request_rate_limit: int = 5
+    password_reset_confirm_rate_limit: int = 10
     sensor_api_key: SecretStr = Field(min_length=24)
     bootstrap_admin_email: str | None = None
     cors_origins: str = "http://localhost:3000"
@@ -35,6 +41,15 @@ class Settings(BaseSettings):
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def validate_production_webhook(self) -> "Settings":
+        if self.environment == "production" and self.password_reset_webhook_url:
+            if not self.password_reset_webhook_secret:
+                raise ValueError("PASSWORD_RESET_WEBHOOK_SECRET is required for production webhook delivery")
+            if not self.password_reset_webhook_url.startswith("https://"):
+                raise ValueError("PASSWORD_RESET_WEBHOOK_URL must use HTTPS in production")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -7,6 +7,13 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   const sensorKey = process.env.E2E_SENSOR_API_KEY;
   test.skip(!sensorKey, "E2E_SENSOR_API_KEY is required");
 
+  let streamConnections = 0;
+  await page.route("**/api/management/stream/events", async (route) => {
+    streamConnections += 1;
+    if (streamConnections === 1) await route.abort("connectionreset");
+    else await route.continue();
+  });
+
   await request.post(`${api}/api/v1/auth/register`, { data: { email, password } });
   await page.goto("/login");
   await page.getByLabel("Email").fill(email);
@@ -14,6 +21,7 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(page.getByText("Total events", { exact: true })).toBeVisible();
+  await expect.poll(() => streamConnections, { timeout: 15_000 }).toBeGreaterThan(1);
   const totalCard = page.getByText("Total events", { exact: true }).locator("..");
   const before = Number(await totalCard.locator("p").nth(1).innerText());
 
@@ -45,6 +53,20 @@ test("login, ingest, investigate, acknowledge, and resolve", async ({ page, requ
   await expect(page.getByText("ACKNOWLEDGED")).toBeVisible();
   await page.getByRole("button", { name: "Resolve" }).click();
   await expect(page.getByText("RESOLVED")).toBeVisible();
+});
+
+test("dashboard presents a retryable API failure", async ({ page }) => {
+  const email = process.env.E2E_ADMIN_EMAIL ?? "admin@example.com";
+  const password = process.env.E2E_ADMIN_PASSWORD ?? "e2e-admin-password";
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+  await page.route("**/api/management/analytics/overview", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Management API is unavailable" }) }));
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("Unable to load the management API");
+  await expect(page.getByRole("button", { name: "Retry request" })).toBeVisible();
 });
 
 test("major SOC routes render backend-backed states", async ({ page }) => {

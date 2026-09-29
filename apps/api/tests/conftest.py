@@ -15,6 +15,14 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.main import app
 from app.models.entities import Role, RoleName
+from app.services.rate_limit import clear_fallback
+
+
+@pytest.fixture(autouse=True)
+def clear_rate_limit_state():
+    clear_fallback()
+    yield
+    clear_fallback()
 
 
 @pytest.fixture()

@@ -12,12 +12,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ac
   const store = await cookies();
   let body = await request.json().catch(() => ({}));
   if (action === "refresh" || action === "logout") body = { refresh_token: store.get("refresh_token")?.value };
-  const upstream = await fetch(`${API_URL}/api/v1/auth/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
+  let upstream: globalThis.Response;
+  try {
+    upstream = await fetch(`${API_URL}/api/v1/auth/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return NextResponse.json({ detail: "Authentication service is unavailable. Try again later." }, { status: 503 });
+  }
   const text = await upstream.text();
   const response = new NextResponse(text || null, { status: upstream.status, headers: { "Content-Type": "application/json" } });
   if (upstream.ok && ["login", "refresh"].includes(action)) {

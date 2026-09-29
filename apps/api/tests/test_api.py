@@ -1,6 +1,10 @@
+import hashlib
+import hmac
+import json as json_module
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from pydantic import SecretStr
 
 from app.core.config import get_settings
 from app.main import local_ingestion_requests, settings
@@ -177,19 +181,30 @@ def test_refresh_logout_and_password_reset_are_one_time(client, monkeypatch):
         def raise_for_status(self):
             return None
 
-    def capture_delivery(_url, *, json, timeout):
+    def capture_delivery(_url, *, json, headers, timeout):
         delivered.update(json)
         assert timeout == 3.0
+        assert headers["X-Honeypot-Delivery-Id"] == json["delivery_id"]
+        body = json_module.dumps(json, separators=(",", ":"), sort_keys=True)
+        expected = hmac.new(
+            b"test-reset-webhook-secret-at-least-32-bytes",
+            f"{headers['X-Honeypot-Timestamp']}.{body}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        assert hmac.compare_digest(headers["X-Honeypot-Signature"], f"sha256={expected}")
         return DeliveryResponse()
 
     monkeypatch.setattr(auth.httpx, "post", capture_delivery)
     config = get_settings()
     previous_webhook = config.password_reset_webhook_url
+    previous_webhook_secret = config.password_reset_webhook_secret
     config.password_reset_webhook_url = "http://reset-delivery.invalid/private"
+    config.password_reset_webhook_secret = SecretStr("test-reset-webhook-secret-at-least-32-bytes")
     try:
         requested = client.post("/api/v1/auth/password-reset/request", json={"email": "admin@example.com"})
     finally:
         config.password_reset_webhook_url = previous_webhook
+        config.password_reset_webhook_secret = previous_webhook_secret
     assert requested.status_code == 202
     assert delivered["email"] == "admin@example.com"
     new_password = "replacement-test-password"
@@ -204,6 +219,27 @@ def test_refresh_logout_and_password_reset_are_one_time(client, monkeypatch):
     ).status_code == 400
     assert client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": "original-test-password"}).status_code == 401
     assert client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": new_password}).status_code == 200
+
+
+def test_authentication_and_reset_rate_limits(client):
+    config = get_settings()
+    original = (config.login_rate_limit, config.password_reset_request_rate_limit, config.password_reset_confirm_rate_limit)
+    config.login_rate_limit = 2
+    config.password_reset_request_rate_limit = 2
+    config.password_reset_confirm_rate_limit = 2
+    try:
+        for _ in range(2):
+            assert client.post("/api/v1/auth/login", json={"email": "nobody@example.com", "password": "wrong"}).status_code == 401
+        assert client.post("/api/v1/auth/login", json={"email": "nobody@example.com", "password": "wrong"}).status_code == 429
+        for _ in range(2):
+            assert client.post("/api/v1/auth/password-reset/request", json={"email": "nobody@example.com"}).status_code == 202
+        assert client.post("/api/v1/auth/password-reset/request", json={"email": "nobody@example.com"}).status_code == 429
+        token = "invalid-token-that-is-at-least-32-chars"
+        for _ in range(2):
+            assert client.post("/api/v1/auth/password-reset/confirm", json={"token": token, "password": "replacement-test-password"}).status_code == 400
+        assert client.post("/api/v1/auth/password-reset/confirm", json={"token": token, "password": "replacement-test-password"}).status_code == 429
+    finally:
+        config.login_rate_limit, config.password_reset_request_rate_limit, config.password_reset_confirm_rate_limit = original
 
 
 def test_ingestion_rate_limit(client):

@@ -77,8 +77,7 @@ None found in this source/runtime review.
 
 ### Medium
 
-- Login and password-reset request endpoints have no dedicated account/IP throttling. Add an upstream or application-level authentication throttle before internet-facing deployment.
-- The configured password-reset webhook receives a raw, one-time reset token. It must be an internal HTTPS endpoint with controlled logs.
+None open in the implemented authentication/reset controls. Production operators must still configure a private HTTPS reset-delivery endpoint and its secret.
 
 ### Low
 
@@ -91,6 +90,12 @@ None found in this source/runtime review.
 - SQLAlchemy uses parameterized ORM/database expressions. No unsafe deserialization or attacker-controlled filesystem path was found in the decoy flow.
 - The HTTP decoy deliberately accepts untrusted requests; captured sensitive headers are redacted.
 - No production frontend mock data was found. Remaining similar terms are tests, development data, configuration, or historical audit documentation.
+- Login, reset request, and reset confirmation are now Redis-backed rate limited with a process-local outage fallback. Limits and window are environment-configurable.
+- Reset delivery now signs canonical JSON with HMAC-SHA256, timestamp, and unique delivery ID. Production configuration rejects a non-HTTPS webhook or missing webhook secret.
+
+## Architecture
+
+`Next.js SOC dashboard -> Next BFF -> FastAPI -> PostgreSQL` is the management path. `SSH/HTTP decoys -> authenticated ingestion -> PostgreSQL + Redis Streams -> worker -> enrichment/ML/notifications` is the sensor path. Redis, PostgreSQL, workers, and decoys are internal services; the dashboard is the sole analyst UI. The only frontend in this repository is the production Next.js SOC dashboard. SSH and HTTP are intentionally simulated attacker-facing decoys, not administrative UIs. No Vite, Flask, duplicate dashboard, or mock production frontend remains.
 
 ## Threat Intelligence
 
@@ -107,6 +112,7 @@ The logistic-regression model trained, persisted to `ml/model/baseline.joblib`, 
 - Empty/loading/error dashboard components were inspected and retained; browser validation exercised populated states. A deliberate API-outage error UI test was not run.
 - Docker/container network isolation, TLS proxy, and hardened container runtime were not tested because Docker was intentionally not installed or used.
 - This is not an independent penetration test.
+- The API-failure UI and SSE reconnect paths are covered by Playwright source tests; their final native browser execution is pending the next complete stack regression after this security hardening change.
 
 ## Docker
 

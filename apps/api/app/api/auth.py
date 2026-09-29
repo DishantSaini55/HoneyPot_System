@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -14,6 +14,8 @@ from app.core.security import (
     new_refresh_token,
     verify_password,
 )
+from app.services.rate_limit import is_allowed
+from app.services.reset_delivery import deliver_password_reset
 from app.models.entities import AuditLog, PasswordResetToken, RefreshToken, Role, RoleName, User
 from app.schemas.auth import (
     LoginRequest,
@@ -28,6 +30,15 @@ from app.schemas.auth import (
 
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+def _source_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_limit(action: str, request: Request, subject: str, limit: int) -> None:
+    if not is_allowed(action, _source_ip(request), subject, limit):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Try again later")
 
 
 def _issue_pair(db: Session, user: User) -> TokenPair:
@@ -74,6 +85,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 
 @router.post("/login", response_model=TokenPair)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenPair:
+    _enforce_limit("login", request, payload.email, get_settings().login_rate_limit)
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
     if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -105,12 +117,18 @@ def logout(payload: LogoutRequest, db: Session = Depends(get_db)) -> None:
 
 
 @router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
-def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)) -> dict:
+def request_password_reset(payload: PasswordResetRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     """Issue a one-time token through a configured private delivery webhook."""
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
     settings = get_settings()
+    _enforce_limit("password-reset-request", request, payload.email, settings.password_reset_request_rate_limit)
     if user and user.is_active:
         raw_token, token_hash = new_refresh_token()
+        db.execute(
+            update(PasswordResetToken)
+            .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+            .values(used_at=datetime.now(UTC))
+        )
         db.add(
             PasswordResetToken(
                 user_id=user.id,
@@ -121,18 +139,15 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
         db.commit()
         if settings.password_reset_webhook_url:
             try:
-                httpx.post(
-                    settings.password_reset_webhook_url,
-                    json={"email": user.email, "reset_token": raw_token},
-                    timeout=3.0,
-                ).raise_for_status()
-            except httpx.HTTPError:
+                deliver_password_reset(user.email, raw_token)
+            except (httpx.HTTPError, RuntimeError):
                 pass
     return {"detail": "If the account exists, reset instructions were sent."}
 
 
 @router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
-def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)) -> None:
+def confirm_password_reset(payload: PasswordResetConfirm, request: Request, db: Session = Depends(get_db)) -> None:
+    _enforce_limit("password-reset-confirm", request, payload.token, get_settings().password_reset_confirm_rate_limit)
     record = db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash == digest_token(payload.token)))
     now = datetime.now(UTC)
     if record is None or record.used_at is not None or record.expires_at.replace(tzinfo=UTC) <= now:
